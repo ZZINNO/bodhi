@@ -104,7 +104,9 @@ func (b *Bodhi) loop(f func(byte2 []byte)) {
 // 向管道推信息
 func post(p *g.Map) {
 	c := msgMap[(*p)["msg_id"].(string)]
-	*c <- *p
+	if c != nil {
+		*c <- *p
+	}
 }
 
 /**
