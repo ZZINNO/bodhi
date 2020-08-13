@@ -90,7 +90,11 @@ func (b *Bodhi) loop(f func(byte2 []byte)) {
 		}
 		var m g.Map
 		_ = json.Unmarshal(msg.Payload(), &m)
-		if m["code"] != 1 {
+		code, ok := m["code"].(int)
+		if !ok {
+			continue
+		}
+		if code != 1 {
 			// 处理信息投递
 			post(&m)
 			continue
@@ -103,7 +107,11 @@ func (b *Bodhi) loop(f func(byte2 []byte)) {
 
 // 向管道推信息
 func post(p *g.Map) {
-	c := msgMap[(*p)["msg_id"].(string)]
+	c, ok := msgMap[(*p)["msg_id"].(string)]
+	if !ok {
+		log.Println("map index error")
+		return
+	}
 	if c != nil {
 		*c <- *p
 	}
