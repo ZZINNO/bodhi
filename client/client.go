@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/gogf/gf/frame/g"
+	"github.com/gogf/gf/util/gconv"
 	"github.com/google/uuid"
 	"log"
 	"time"
@@ -33,6 +34,8 @@ g.map{
 回复的信息 code为2
 回复的信息 code为2
 重要的事情说三遍
+
+如果code为0 消息会被直接跳过
 */
 
 /**
@@ -90,13 +93,17 @@ func (b *Bodhi) loop(f func(byte2 []byte)) {
 		}
 		var m g.Map
 		_ = json.Unmarshal(msg.Payload(), &m)
-		code, ok := m["code"].(int)
+		code, ok := m["code"].(float64)
 		if !ok {
 			continue
 		}
-		if code != 1 {
+		c := gconv.Int(code)
+		if c != 1 {
 			// 处理信息投递
 			post(&m)
+			continue
+		} else if c == 0 {
+			b.Consumer.Ack(msg)
 			continue
 		}
 		b.Consumer.Ack(msg)
