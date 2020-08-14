@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/apache/pulsar-client-go/pulsar"
-	"github.com/gogf/gf/frame/g"
 	"github.com/gogf/gf/util/gconv"
 	"github.com/google/uuid"
 	"log"
@@ -195,11 +194,11 @@ func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (*Msg, error) {
 @topic topic
 */
 func (b *Bodhi) SendReply(id string, data string, topic string) error {
-	payload := g.Map{
-		"msg_id":     id,
-		"code":       2,
-		"data":       data,
-		"from_topic": b.topic,
+	payload := Msg{
+		MagId:     id,
+		Code:      2,
+		Data:      data,
+		FromTopic: b.topic,
 	}
 	content, err := json.Marshal(payload)
 
