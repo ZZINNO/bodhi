@@ -41,10 +41,10 @@ type Data struct {
 }
 
 type RespondMsg struct {
-	MagId     string      `json:"mag_id"`
-	Code      float64     `json:"code"`
-	Data      interface{} `json:"data"`
-	FromTopic string      `json:"from_topic"`
+	MagId     string                 `json:"mag_id"`
+	Code      float64                `json:"code"`
+	Data      map[string]interface{} `json:"data"`
+	FromTopic string                 `json:"from_topic"`
 }
 
 /**
@@ -217,7 +217,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error
 @data 消息体
 @topic topic
 */
-func (b *Bodhi) SendReply(id string, data interface{}, topic string) error {
+func (b *Bodhi) SendReply(id string, data map[string]interface{}, topic string) error {
 	payload := RespondMsg{
 		MagId:     id,
 		Code:      2,
