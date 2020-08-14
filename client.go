@@ -1,4 +1,4 @@
-package bodhi
+package main
 
 import (
 	"context"
