@@ -25,10 +25,19 @@ type RequestMsg struct {
 	FromTopic string  `json:"from_topic"`
 }
 
+/**
+Columns 是专门用在case 进行整体匹配的, 每个case需要针对性的约定开发
+*/
+
 type Data struct {
-	Table   string   `json:"table"`
-	Key     string   `json:"key"`
-	Columns []string `json:"columns"`
+	Key     string `json:"key"`
+	Columns string `json:"columns"`
+	/**
+	key = "1"
+	*/
+	/**
+	columns = "/user/schoolId&username&schoolName"
+	*/
 }
 
 type RespondMsg struct {
