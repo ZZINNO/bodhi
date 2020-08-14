@@ -60,7 +60,7 @@ type Bodhi struct {
 @topic 是你自己接受消息的topic
 @f 是接收到查询请求的回调函数
 */
-func (b *Bodhi) New(Url string, Topic string, f func(byte2 []byte)) error {
+func (b *Bodhi) New(Url string, Topic string, f func(msg Msg)) error {
 	b.uRL = Url
 	b.topic = Topic
 	var err error
@@ -92,7 +92,7 @@ func (b *Bodhi) New(Url string, Topic string, f func(byte2 []byte)) error {
 /**
 这个函数你调用不到的，
 */
-func (b *Bodhi) loop(f func(byte2 []byte)) {
+func (b *Bodhi) loop(f func(msg Msg)) {
 	for {
 		msg, err := b.Consumer.Receive(context.Background())
 		if err != nil {
@@ -112,7 +112,7 @@ func (b *Bodhi) loop(f func(byte2 []byte)) {
 		}
 		b.Consumer.Ack(msg)
 		// 回调函数处理msg
-		go f(msg.Payload())
+		go f(m)
 	}
 }
 
