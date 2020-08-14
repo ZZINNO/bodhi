@@ -12,17 +12,30 @@ import (
 )
 
 // 这里的msgMAP 就是为了开一个地方用于投递
-var msgMap map[string]*chan Msg
+var msgMap map[string]*chan RespondMsg
 
 func init() {
-	msgMap = make(map[string]*chan Msg)
+	msgMap = make(map[string]*chan RespondMsg)
 }
 
-type Msg struct {
+type RequestMsg struct {
 	MagId     string  `json:"mag_id"`
 	Code      float64 `json:"code"`
-	Data      string  `json:"data"`
+	Data      Data    `json:"data"`
 	FromTopic string  `json:"from_topic"`
+}
+
+type Data struct {
+	Table   string   `json:"table"`
+	Key     string   `json:"key"`
+	Columns []string `json:"columns"`
+}
+
+type RespondMsg struct {
+	MagId     string      `json:"mag_id"`
+	Code      float64     `json:"code"`
+	Data      interface{} `json:"data"`
+	FromTopic string      `json:"from_topic"`
 }
 
 /**
@@ -59,7 +72,7 @@ type Bodhi struct {
 @topic 是你自己接受消息的topic
 @f 是接收到查询请求的回调函数
 */
-func (b *Bodhi) New(Url string, Topic string, f func(msg Msg)) error {
+func (b *Bodhi) New(Url string, Topic string, f func(msg RequestMsg)) error {
 	b.uRL = Url
 	b.topic = Topic
 	var err error
@@ -91,13 +104,14 @@ func (b *Bodhi) New(Url string, Topic string, f func(msg Msg)) error {
 /**
 这个函数你调用不到的，
 */
-func (b *Bodhi) loop(f func(msg Msg)) {
+func (b *Bodhi) loop(f func(msg RequestMsg)) {
 	for {
 		msg, err := b.Consumer.Receive(context.Background())
+		b.Consumer.Ack(msg)
 		if err != nil {
 			log.Fatal(err)
 		}
-		var m Msg
+		var m RespondMsg
 		_ = json.Unmarshal(msg.Payload(), &m)
 		code := m.Code
 		c := gconv.Int(code)
@@ -109,14 +123,15 @@ func (b *Bodhi) loop(f func(msg Msg)) {
 			b.Consumer.Ack(msg)
 			continue
 		}
-		b.Consumer.Ack(msg)
 		// 回调函数处理msg
-		go f(m)
+		var rm RequestMsg
+		_ = json.Unmarshal(msg.Payload(), &rm)
+		go f(rm)
 	}
 }
 
 // 向管道推信息
-func post(p *Msg) {
+func post(p *RespondMsg) {
 	c, ok := msgMap[(*p).MagId]
 	if !ok {
 		log.Println("map index error")
@@ -132,11 +147,11 @@ func post(p *Msg) {
 @data 格式为string的数据
 @topic 要发送的string
 */
-func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (*Msg, error) {
+func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error) {
 	// 新建一个uuid
 	id := uuid.New()
 	// 构建payload
-	payload := Msg{
+	payload := RequestMsg{
 		MagId:     id.String(),
 		Code:      1,
 		Data:      data,
@@ -155,7 +170,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (*Msg, error) {
 	defer producer.Close()
 
 	// 初始化一个ch用于接受消息
-	ch := make(chan Msg, 1)
+	ch := make(chan RespondMsg, 1)
 
 	// 将消息接受通道注册到 消息全局map
 	msgMap[id.String()] = &ch
@@ -193,8 +208,8 @@ func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (*Msg, error) {
 @data 消息体
 @topic topic
 */
-func (b *Bodhi) SendReply(id string, data string, topic string) error {
-	payload := Msg{
+func (b *Bodhi) SendReply(id string, data interface{}, topic string) error {
+	payload := RespondMsg{
 		MagId:     id,
 		Code:      2,
 		Data:      data,
