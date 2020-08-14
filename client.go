@@ -13,10 +13,17 @@ import (
 )
 
 // 这里的msgMAP 就是为了开一个地方用于投递
-var msgMap map[string]*chan g.Map
+var msgMap map[string]*chan Msg
 
 func init() {
-	msgMap = make(map[string]*chan g.Map)
+	msgMap = make(map[string]*chan Msg)
+}
+
+type Msg struct {
+	MagId     string  `json:"mag_id"`
+	Code      float64 `json:"code"`
+	Data      string  `json:"data"`
+	FromTopic string  `json:"from_topic"`
 }
 
 /**
@@ -91,12 +98,9 @@ func (b *Bodhi) loop(f func(byte2 []byte)) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		var m g.Map
+		var m Msg
 		_ = json.Unmarshal(msg.Payload(), &m)
-		code, ok := m["code"].(float64)
-		if !ok {
-			continue
-		}
+		code := m.Code
 		c := gconv.Int(code)
 		if c != 1 {
 			// 处理信息投递
@@ -113,8 +117,8 @@ func (b *Bodhi) loop(f func(byte2 []byte)) {
 }
 
 // 向管道推信息
-func post(p *g.Map) {
-	c, ok := msgMap[(*p)["msg_id"].(string)]
+func post(p *Msg) {
+	c, ok := msgMap[(*p).MagId]
 	if !ok {
 		log.Println("map index error")
 		return
@@ -129,15 +133,15 @@ func post(p *g.Map) {
 @data 格式为string的数据
 @topic 要发送的string
 */
-func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (g.Map, error) {
+func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (*Msg, error) {
 	// 新建一个uuid
 	id := uuid.New()
 	// 构建payload
-	payload := g.Map{
-		"msg_id":     id.String(),
-		"code":       1,
-		"data":       data,
-		"from_topic": b.topic,
+	payload := Msg{
+		MagId:     id.String(),
+		Code:      1,
+		Data:      data,
+		FromTopic: b.topic,
 	}
 	// 将payload 转化为字节数组
 	content, err := json.Marshal(payload)
@@ -152,7 +156,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (g.Map, error) {
 	defer producer.Close()
 
 	// 初始化一个ch用于接受消息
-	ch := make(chan g.Map, 1)
+	ch := make(chan Msg, 1)
 
 	// 将消息接受通道注册到 消息全局map
 	msgMap[id.String()] = &ch
@@ -174,7 +178,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data string, topic string) (g.Map, error) {
 	select {
 	case m := <-ch:
 		{
-			return m, nil
+			return &m, nil
 		}
 	case <-time.After(3 * time.Second):
 		{
