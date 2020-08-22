@@ -14,6 +14,7 @@ import (
 
 // 这里的msgMAP 就是为了开一个地方用于投递
 var msgMap sync.Map
+var producerMap sync.Map
 
 //
 //func init() {
@@ -187,16 +188,19 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 	}
 	// 将payload 转化为字节数组
 	content, err := json.Marshal(payload)
-
-	// 新建发送工具
-	producer, err := b.Client.CreateProducer(pulsar.ProducerOptions{
-		Topic: topic,
-	})
-	if err != nil {
-		return RespondMsg{}, err
+	var producer pulsar.Producer
+	pload, ok := producerMap.Load(topic)
+	if !ok {
+		producer, _ = b.Client.CreateProducer(pulsar.ProducerOptions{
+			Topic: topic,
+		})
+		producerMap.Store(topic, &producer)
+	} else {
+		producer = *pload.(*pulsar.Producer)
 	}
-	defer producer.Close()
 
+	//defer producer.Close()
+	// 这里就不在结束的时候关闭通道了，反正你也不可能建立那么多通道对吧
 	// 初始化一个ch用于接受消息
 	ch := make(chan RespondMsg)
 
@@ -249,13 +253,16 @@ func (b *Bodhi) SendReply(id string, data map[string]interface{}, topic string) 
 	}
 	content, err := json.Marshal(payload)
 
-	producer, err := b.Client.CreateProducer(pulsar.ProducerOptions{
-		Topic: topic,
-	})
-	if err != nil {
-		return err
+	var producer pulsar.Producer
+	pload, ok := producerMap.Load(topic)
+	if !ok {
+		producer, _ = b.Client.CreateProducer(pulsar.ProducerOptions{
+			Topic: topic,
+		})
+		producerMap.Store(topic, &producer)
+	} else {
+		producer = *pload.(*pulsar.Producer)
 	}
-	defer producer.Close()
 
 	_, err = producer.Send(context.Background(), &pulsar.ProducerMessage{
 		Payload: content,
