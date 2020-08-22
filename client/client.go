@@ -8,15 +8,17 @@ import (
 	"github.com/gogf/gf/util/gconv"
 	"github.com/google/uuid"
 	"log"
+	"sync"
 	"time"
 )
 
 // 这里的msgMAP 就是为了开一个地方用于投递
-var msgMap map[string]*chan RespondMsg
+var msgMap sync.Map
 
-func init() {
-	msgMap = make(map[string]*chan RespondMsg)
-}
+//
+//func init() {
+//	msgMap = make(map[string]*chan RespondMsg)
+//}
 
 type RequestMsg struct {
 	MagId     string  `json:"mag_id"`
@@ -140,10 +142,10 @@ func (b *Bodhi) dealMsg(msg pulsar.Message) {
 	_ = json.Unmarshal(msg.Payload(), &m)
 	code := m.Code
 	c := gconv.Int(code)
-	log.Println(m)
+	//log.Println(m)
 	if c != 1 {
 		// 处理信息投递
-		post(&m)
+		post(m)
 		return
 	} else if c == 0 {
 		b.Consumer.Ack(msg)
@@ -156,14 +158,15 @@ func (b *Bodhi) dealMsg(msg pulsar.Message) {
 }
 
 // 向管道推信息
-func post(p *RespondMsg) {
-	c, ok := msgMap[(*p).MagId]
+func post(p RespondMsg) {
+	//c, ok := msgMap[p.MagId]
+	c, ok := msgMap.Load(p.MagId)
 	if !ok {
 		log.Println("map index error")
 		return
 	}
 	if c != nil {
-		*c <- *p
+		*c.(*chan RespondMsg) <- p
 	}
 }
 
@@ -172,7 +175,7 @@ func post(p *RespondMsg) {
 @data 格式为string的数据
 @topic 要发送的string
 */
-func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error) {
+func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error) {
 	// 新建一个uuid
 	id := uuid.New()
 	// 构建payload
@@ -190,18 +193,21 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error
 		Topic: topic,
 	})
 	if err != nil {
-		return nil, err
+		return RespondMsg{}, err
 	}
 	defer producer.Close()
 
 	// 初始化一个ch用于接受消息
-	ch := make(chan RespondMsg, 1)
+	ch := make(chan RespondMsg)
 
 	// 将消息接受通道注册到 消息全局map
-	msgMap[id.String()] = &ch
+	key := id.String()
+	msgMap.Store(key, &ch)
+	//msgMap[key] = &ch
 	defer func() {
-		delete(msgMap, id.String())
+		//delete(msgMap, key)
 		close(ch)
+		msgMap.Delete(key)
 	}()
 
 	// 发送消息
@@ -210,7 +216,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error
 	})
 
 	if err != nil {
-		return nil, err
+		return RespondMsg{}, err
 	}
 
 	// 等待响应消息到来，TimeOut秒后超时
@@ -218,11 +224,11 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error
 	select {
 	case m := <-ch:
 		{
-			return &m, nil
+			return m, nil
 		}
 	case <-time.After(time.Duration(b.TimeOut) * time.Second):
 		{
-			return nil, errors.New("reply time out")
+			return RespondMsg{}, errors.New("reply time out")
 		}
 
 	}
