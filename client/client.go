@@ -74,6 +74,13 @@ type Bodhi struct {
 	topic    string
 	Client   pulsar.Client
 	Consumer pulsar.Consumer
+	TimeOut  time.Duration
+}
+type Config struct {
+	Url      string
+	Topic    string
+	CallBack func(msg RequestMsg)
+	TimeOut  time.Duration
 }
 
 /**
@@ -81,9 +88,10 @@ type Bodhi struct {
 @topic 是你自己接受消息的topic
 @f 是接收到查询请求的回调函数
 */
-func (b *Bodhi) New(Url string, Topic string, f func(msg RequestMsg)) error {
-	b.uRL = Url
-	b.topic = Topic
+func (b *Bodhi) New(config Config) error {
+	b.uRL = config.Url
+	b.topic = config.Topic
+	b.TimeOut = config.TimeOut
 	var err error
 	b.Client, err = pulsar.NewClient(pulsar.ClientOptions{
 		URL:               b.uRL,
@@ -105,13 +113,13 @@ func (b *Bodhi) New(Url string, Topic string, f func(msg RequestMsg)) error {
 		return err
 	}
 	// 开始loop
-	go b.loop(f)
+	go b.loop(config.CallBack)
 
 	return nil
 }
 
 /**
-这个函数你调用不到的，
+这个函数你调用不到的，这个是bodhi自己维护的消息循环
 */
 func (b *Bodhi) loop(f func(msg RequestMsg)) {
 	for {
@@ -197,13 +205,14 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error
 		return nil, err
 	}
 
-	// 等待响应消息到来，3秒后超时
+	// 等待响应消息到来，TimeOut秒后超时
+
 	select {
 	case m := <-ch:
 		{
 			return &m, nil
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(b.TimeOut):
 		{
 			return nil, errors.New("reply time out")
 		}
