@@ -74,13 +74,14 @@ type Bodhi struct {
 	topic    string
 	Client   pulsar.Client
 	Consumer pulsar.Consumer
-	TimeOut  time.Duration
+	CallBack func(msg RequestMsg)
+	TimeOut  int
 }
 type Config struct {
 	Url      string
 	Topic    string
 	CallBack func(msg RequestMsg)
-	TimeOut  time.Duration
+	TimeOut  int
 }
 
 /**
@@ -92,6 +93,7 @@ func (b *Bodhi) New(config Config) error {
 	b.uRL = config.Url
 	b.topic = config.Topic
 	b.TimeOut = config.TimeOut
+	b.CallBack = config.CallBack
 	var err error
 	b.Client, err = pulsar.NewClient(pulsar.ClientOptions{
 		URL:               b.uRL,
@@ -100,7 +102,7 @@ func (b *Bodhi) New(config Config) error {
 	})
 
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 		return err
 	}
 	b.Consumer, err = b.Client.Subscribe(pulsar.ConsumerOptions{
@@ -109,42 +111,48 @@ func (b *Bodhi) New(config Config) error {
 		Type:             pulsar.Shared,
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 		return err
 	}
 	// 开始loop
-	go b.loop(config.CallBack)
-
+	go b.loop()
 	return nil
 }
 
 /**
 这个函数你调用不到的，这个是bodhi自己维护的消息循环
 */
-func (b *Bodhi) loop(f func(msg RequestMsg)) {
+func (b *Bodhi) loop() {
 	for {
 		msg, err := b.Consumer.Receive(context.Background())
-		b.Consumer.Ack(msg)
 		if err != nil {
-			log.Fatal(err)
-		}
-		var m RespondMsg
-		_ = json.Unmarshal(msg.Payload(), &m)
-		code := m.Code
-		c := gconv.Int(code)
-		if c != 1 {
-			// 处理信息投递
-			post(&m)
-			continue
-		} else if c == 0 {
-			b.Consumer.Ack(msg)
+			log.Println(err)
 			continue
 		}
-		// 回调函数处理msg
-		var rm RequestMsg
-		_ = json.Unmarshal(msg.Payload(), &rm)
-		go f(rm)
+		go b.dealMsg(msg)
 	}
+}
+
+func (b *Bodhi) dealMsg(msg pulsar.Message) {
+	b.Consumer.Ack(msg)
+
+	var m RespondMsg
+	_ = json.Unmarshal(msg.Payload(), &m)
+	code := m.Code
+	c := gconv.Int(code)
+	log.Println(m)
+	if c != 1 {
+		// 处理信息投递
+		post(&m)
+		return
+	} else if c == 0 {
+		b.Consumer.Ack(msg)
+		return
+	}
+	// 回调函数处理msg
+	var rm RequestMsg
+	_ = json.Unmarshal(msg.Payload(), &rm)
+	go b.CallBack(rm)
 }
 
 // 向管道推信息
@@ -212,7 +220,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (*RespondMsg, error
 		{
 			return &m, nil
 		}
-	case <-time.After(b.TimeOut):
+	case <-time.After(time.Duration(b.TimeOut) * time.Second):
 		{
 			return nil, errors.New("reply time out")
 		}
