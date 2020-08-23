@@ -2,19 +2,18 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"github.com/apache/pulsar-client-go/pulsar"
-	"github.com/gogf/gf/util/gconv"
 	"github.com/google/uuid"
+	"github.com/json-iterator/go"
 	"log"
+	"runtime"
 	"sync"
 	"time"
 )
 
 // 这里的msgMAP 就是为了开一个地方用于投递
-var msgMap sync.Map
-var producerMap sync.Map
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 //
 //func init() {
@@ -73,18 +72,24 @@ g.map{
 表面oo的超级大类
 */
 type Bodhi struct {
-	uRL      string
-	topic    string
-	Client   pulsar.Client
-	Consumer pulsar.Consumer
-	CallBack func(msg RequestMsg)
-	TimeOut  int
+	uRL         string
+	topic       string
+	Client      pulsar.Client
+	Consumer    pulsar.Consumer
+	CallBack    func(msg RequestMsg)
+	TimeOut     int
+	msgMap      sync.Map
+	producerMap sync.Map
 }
 type Config struct {
 	Url      string
 	Topic    string
 	CallBack func(msg RequestMsg)
 	TimeOut  int
+}
+
+func init() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 /**
@@ -137,31 +142,39 @@ func (b *Bodhi) loop() {
 }
 
 func (b *Bodhi) dealMsg(msg pulsar.Message) {
-	b.Consumer.Ack(msg)
-
+	go b.Consumer.Ack(msg)
 	var m RespondMsg
 	_ = json.Unmarshal(msg.Payload(), &m)
 	code := m.Code
-	c := gconv.Int(code)
+	c := int(code)
 	//log.Println(m)
-	if c != 1 {
-		// 处理信息投递
-		post(m)
-		return
-	} else if c == 0 {
-		b.Consumer.Ack(msg)
-		return
+	switch c {
+	case 2:
+		{
+			go b.post(m)
+			return
+		}
+	case 1:
+		{
+			// 回调函数处理msg
+			var rm RequestMsg
+			_ = json.Unmarshal(msg.Payload(), &rm)
+			go b.CallBack(rm)
+			return
+		}
+	default:
+		{
+			return
+		}
+
 	}
-	// 回调函数处理msg
-	var rm RequestMsg
-	_ = json.Unmarshal(msg.Payload(), &rm)
-	go b.CallBack(rm)
+
 }
 
 // 向管道推信息
-func post(p RespondMsg) {
+func (b *Bodhi) post(p RespondMsg) {
 	//c, ok := msgMap[p.MagId]
-	c, ok := msgMap.Load(p.MagId)
+	c, ok := b.msgMap.Load(p.MagId)
 	if !ok {
 		log.Println("map index error")
 		return
@@ -189,12 +202,12 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 	// 将payload 转化为字节数组
 	content, err := json.Marshal(payload)
 	var producer pulsar.Producer
-	pload, ok := producerMap.Load(topic)
+	pload, ok := b.producerMap.Load(topic)
 	if !ok {
 		producer, _ = b.Client.CreateProducer(pulsar.ProducerOptions{
 			Topic: topic,
 		})
-		producerMap.Store(topic, &producer)
+		b.producerMap.Store(topic, &producer)
 	} else {
 		producer = *pload.(*pulsar.Producer)
 	}
@@ -206,12 +219,12 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 
 	// 将消息接受通道注册到 消息全局map
 	key := id.String()
-	msgMap.Store(key, &ch)
+	b.msgMap.Store(key, &ch)
 	//msgMap[key] = &ch
 	defer func() {
 		//delete(msgMap, key)
 		close(ch)
-		msgMap.Delete(key)
+		b.msgMap.Delete(key)
 	}()
 
 	// 发送消息
@@ -254,12 +267,12 @@ func (b *Bodhi) SendReply(id string, data map[string]interface{}, topic string) 
 	content, err := json.Marshal(payload)
 
 	var producer pulsar.Producer
-	pload, ok := producerMap.Load(topic)
+	pload, ok := b.producerMap.Load(topic)
 	if !ok {
 		producer, _ = b.Client.CreateProducer(pulsar.ProducerOptions{
 			Topic: topic,
 		})
-		producerMap.Store(topic, &producer)
+		b.producerMap.Store(topic, &producer)
 	} else {
 		producer = *pload.(*pulsar.Producer)
 	}
