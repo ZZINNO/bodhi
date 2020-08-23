@@ -215,7 +215,8 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 	//defer producer.Close()
 	// 这里就不在结束的时候关闭通道了，反正你也不可能建立那么多通道对吧
 	// 初始化一个ch用于接受消息
-	ch := make(chan RespondMsg)
+	ch := make(chan RespondMsg, 1)
+	timeOut := make(chan bool, 1)
 
 	// 将消息接受通道注册到 消息全局map
 	key := id.String()
@@ -223,14 +224,18 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 	//msgMap[key] = &ch
 	defer func() {
 		//delete(msgMap, key)
-		close(ch)
 		b.msgMap.Delete(key)
+		close(ch)
 	}()
 
-	// 发送消息
 	_, err = producer.Send(context.Background(), &pulsar.ProducerMessage{
 		Payload: content,
 	})
+	// 发送消息
+	go func() {
+		time.Sleep(time.Duration(b.TimeOut) * time.Second) // 等待n秒钟
+		timeOut <- true
+	}()
 
 	if err != nil {
 		return RespondMsg{}, err
@@ -243,7 +248,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 		{
 			return m, nil
 		}
-	case <-time.After(time.Duration(b.TimeOut) * time.Second):
+	case <-timeOut:
 		{
 			return RespondMsg{}, errors.New("reply time out")
 		}
