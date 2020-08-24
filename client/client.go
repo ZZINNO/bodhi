@@ -142,7 +142,7 @@ func (b *Bodhi) loop() {
 }
 
 func (b *Bodhi) dealMsg(msg pulsar.Message) {
-	go b.Consumer.Ack(msg)
+
 	var m RespondMsg
 	_ = json.Unmarshal(msg.Payload(), &m)
 	code := m.Code
@@ -151,19 +151,32 @@ func (b *Bodhi) dealMsg(msg pulsar.Message) {
 	switch c {
 	case 2:
 		{
-			go b.post(m)
-			return
+			go func() {
+				err := b.post(m)
+				if err != nil {
+					go b.Consumer.Nack(msg)
+				} else {
+					go b.Consumer.Ack(msg)
+				}
+				return
+			}()
+
 		}
 	case 1:
 		{
-			// 回调函数处理msg
-			var rm RequestMsg
-			_ = json.Unmarshal(msg.Payload(), &rm)
-			go b.CallBack(rm)
-			return
+			go func() {
+				b.Consumer.Ack(msg)
+				// 回调函数处理msg
+				var rm RequestMsg
+				_ = json.Unmarshal(msg.Payload(), &rm)
+				go b.CallBack(rm)
+				return
+			}()
+
 		}
 	default:
 		{
+			go b.Consumer.Ack(msg)
 			return
 		}
 
@@ -172,16 +185,16 @@ func (b *Bodhi) dealMsg(msg pulsar.Message) {
 }
 
 // 向管道推信息
-func (b *Bodhi) post(p RespondMsg) {
+func (b *Bodhi) post(p RespondMsg) error {
 	//c, ok := msgMap[p.MagId]
 	c, ok := b.msgMap.Load(p.MagId)
 	if !ok {
-		log.Println("map index error")
-		return
+		return errors.New("map index error")
 	}
 	if c != nil {
 		*c.(*chan RespondMsg) <- p
 	}
+	return nil
 }
 
 /**
