@@ -6,31 +6,28 @@ import (
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/google/uuid"
 	"github.com/json-iterator/go"
-	"log"
+	"github.com/sirupsen/logrus"
+	"math/rand"
 	"runtime"
 	"sync"
 	"time"
 )
 
-// 这里的msgMAP 就是为了开一个地方用于投递
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 //
 //func init() {
 //	msgMap = make(map[string]*chan RespondMsg)
 //}
-
 type RequestMsg struct {
-	MagId     string  `json:"mag_id"`
-	Code      float64 `json:"code"`
-	Data      Data    `json:"data"`
-	FromTopic string  `json:"from_topic"`
+	MagId     string `json:"mag_id"`
+	Data      Data   `json:"data"`
+	FromTopic string `json:"from_topic"`
 }
 
 /**
 Columns 是专门用在case 进行整体匹配的, 每个case需要针对性的约定开发
 */
-
 type Data struct {
 	Key     string `json:"key"`
 	Columns string `json:"columns"`
@@ -50,46 +47,43 @@ type RespondMsg struct {
 }
 
 /**
-关于标记消息来回的规则
-g.map{
-		"msg_id": id,
-		"code":   1,
-		"data":   data,
-		"from_topic":  topic,
-}
-
-这里如果信息是发出的，则code需要赋值为1
-如果是收到code为1 就是收到查询请求
-回复的信息 code为2
-回复的信息 code为2
-回复的信息 code为2
-重要的事情说三遍
-
-如果code为0 消息会被直接跳过
-*/
-
-/**
 表面oo的超级大类
 */
 type Bodhi struct {
-	uRL         string
-	topic       string
-	Client      pulsar.Client
-	Consumer    pulsar.Consumer
-	CallBack    func(msg RequestMsg)
-	TimeOut     int
-	msgMap      sync.Map
-	producerMap sync.Map
+	uRL            string
+	topic          string
+	serviceClient  pulsar.Client
+	replyClient    pulsar.Client
+	serverConsumer pulsar.Consumer
+	replyConsumer  pulsar.Consumer
+	replyTopic     string
+	CallBack       func(msg RequestMsg) map[string]interface{}
+	timeOut        int
+	msgMap         sync.Map
+	producerMap    sync.Map
 }
 type Config struct {
 	Url      string
 	Topic    string
-	CallBack func(msg RequestMsg)
+	CallBack func(msg RequestMsg) map[string]interface{}
 	TimeOut  int
 }
 
 func init() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+}
+
+/*
+随机字符串生成
+*/
+func (b *Bodhi) RandString(len int) string {
+	r := rand.New(rand.NewSource(time.Now().Unix()))
+	bytes := make([]byte, len)
+	for i := 0; i < len; i++ {
+		b := r.Intn(26) + 65
+		bytes[i] = byte(b)
+	}
+	return string(bytes)
 }
 
 /**
@@ -100,88 +94,92 @@ func init() {
 func (b *Bodhi) New(config Config) error {
 	b.uRL = config.Url
 	b.topic = config.Topic
-	b.TimeOut = config.TimeOut
+	b.timeOut = config.TimeOut
 	b.CallBack = config.CallBack
+	b.replyTopic = config.Topic + b.RandString(6)
 	var err error
-	b.Client, err = pulsar.NewClient(pulsar.ClientOptions{
+	b.serviceClient, err = pulsar.NewClient(pulsar.ClientOptions{
 		URL:               b.uRL,
 		OperationTimeout:  30 * time.Second,
 		ConnectionTimeout: 30 * time.Second,
 	})
-
+	b.replyClient, err = pulsar.NewClient(pulsar.ClientOptions{
+		URL:               b.uRL,
+		OperationTimeout:  30 * time.Second,
+		ConnectionTimeout: 30 * time.Second,
+	})
 	if err != nil {
-		log.Println(err)
+		logrus.Error(err)
 		return err
 	}
-	b.Consumer, err = b.Client.Subscribe(pulsar.ConsumerOptions{
+	b.replyConsumer, err = b.replyClient.Subscribe(pulsar.ConsumerOptions{
+		Topic:            b.replyTopic,
+		SubscriptionName: "my-reply",
+		Type:             pulsar.Shared,
+	})
+	b.serverConsumer, err = b.serviceClient.Subscribe(pulsar.ConsumerOptions{
 		Topic:            b.topic,
-		SubscriptionName: "my-sub",
+		SubscriptionName: "my-sender",
 		Type:             pulsar.Shared,
 	})
 	if err != nil {
-		log.Println(err)
+		logrus.Error(err)
 		return err
 	}
 	// 开始loop
-	go b.loop()
+	go b.serverLoop()
+	go b.replyLoop()
 	return nil
 }
 
 /**
-这个函数你调用不到的，这个是bodhi自己维护的消息循环
+对外服务
 */
-func (b *Bodhi) loop() {
+func (b *Bodhi) serverLoop() {
 	for {
-		msg, err := b.Consumer.Receive(context.Background())
+		msg, err := b.serverConsumer.Receive(context.Background())
 		if err != nil {
-			log.Println(err)
+			logrus.Error(err)
 			continue
 		}
 		go b.dealMsg(msg)
 	}
 }
-
 func (b *Bodhi) dealMsg(msg pulsar.Message) {
+	go b.serverConsumer.Ack(msg)
+	var rm RequestMsg
+	_ = json.Unmarshal(msg.Payload(), &rm)
+	rep := b.CallBack(rm)
+	err := b.sendReply(rm.MagId, rep, rm.FromTopic)
+	if err != nil {
+		logrus.Error(err)
+	}
+	return
+}
 
+/**
+接收响应
+*/
+func (b *Bodhi) replyLoop() {
+	for {
+		msg, err := b.replyConsumer.Receive(context.Background())
+		if err != nil {
+			logrus.Error(err)
+			continue
+		}
+		go b.replyMsg(msg)
+	}
+}
+
+func (b *Bodhi) replyMsg(msg pulsar.Message) {
+	go b.replyConsumer.Ack(msg)
 	var m RespondMsg
 	_ = json.Unmarshal(msg.Payload(), &m)
-	code := m.Code
-	c := int(code)
-	//log.Println(m)
-	switch c {
-	case 2:
-		{
-			go func() {
-				err := b.post(m)
-				if err != nil {
-					go b.Consumer.Nack(msg)
-				} else {
-					go b.Consumer.Ack(msg)
-				}
-				return
-			}()
-
-		}
-	case 1:
-		{
-			go func() {
-				b.Consumer.Ack(msg)
-				// 回调函数处理msg
-				var rm RequestMsg
-				_ = json.Unmarshal(msg.Payload(), &rm)
-				go b.CallBack(rm)
-				return
-			}()
-
-		}
-	default:
-		{
-			go b.Consumer.Ack(msg)
-			return
-		}
-
+	err := b.post(m)
+	if err != nil {
+		logrus.Error(err)
 	}
-
+	return
 }
 
 // 向管道推信息
@@ -208,29 +206,26 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 	// 构建payload
 	payload := RequestMsg{
 		MagId:     id.String(),
-		Code:      1,
 		Data:      data,
-		FromTopic: b.topic,
+		FromTopic: b.replyTopic,
 	}
 	// 将payload 转化为字节数组
 	content, err := json.Marshal(payload)
 	var producer pulsar.Producer
 	pload, ok := b.producerMap.Load(topic)
 	if !ok {
-		producer, _ = b.Client.CreateProducer(pulsar.ProducerOptions{
+		producer, _ = b.replyClient.CreateProducer(pulsar.ProducerOptions{
 			Topic: topic,
 		})
 		b.producerMap.Store(topic, &producer)
 	} else {
 		producer = *pload.(*pulsar.Producer)
 	}
-
 	//defer producer.Close()
 	// 这里就不在结束的时候关闭通道了，反正你也不可能建立那么多通道对吧
 	// 初始化一个ch用于接受消息
 	ch := make(chan RespondMsg, 1)
 	timeOut := make(chan bool, 1)
-
 	// 将消息接受通道注册到 消息全局map
 	key := id.String()
 	b.msgMap.Store(key, &ch)
@@ -240,22 +235,18 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 		b.msgMap.Delete(key)
 		close(ch)
 	}()
-
 	_, err = producer.Send(context.Background(), &pulsar.ProducerMessage{
 		Payload: content,
 	})
 	// 发送消息
 	go func() {
-		time.Sleep(time.Duration(b.TimeOut) * time.Second) // 等待n秒钟
+		time.Sleep(time.Duration(b.timeOut) * time.Second) // 等待n秒钟
 		timeOut <- true
 	}()
-
 	if err != nil {
 		return RespondMsg{}, err
 	}
-
 	// 等待响应消息到来，TimeOut秒后超时
-
 	select {
 	case m := <-ch:
 		{
@@ -265,7 +256,6 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 		{
 			return RespondMsg{}, errors.New("reply time out")
 		}
-
 	}
 }
 
@@ -275,7 +265,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 @data 消息体
 @topic topic
 */
-func (b *Bodhi) SendReply(id string, data map[string]interface{}, topic string) error {
+func (b *Bodhi) sendReply(id string, data map[string]interface{}, topic string) error {
 	payload := RespondMsg{
 		MagId:     id,
 		Code:      2,
@@ -283,25 +273,21 @@ func (b *Bodhi) SendReply(id string, data map[string]interface{}, topic string) 
 		FromTopic: b.topic,
 	}
 	content, err := json.Marshal(payload)
-
 	var producer pulsar.Producer
 	pload, ok := b.producerMap.Load(topic)
 	if !ok {
-		producer, _ = b.Client.CreateProducer(pulsar.ProducerOptions{
+		producer, _ = b.serviceClient.CreateProducer(pulsar.ProducerOptions{
 			Topic: topic,
 		})
 		b.producerMap.Store(topic, &producer)
 	} else {
 		producer = *pload.(*pulsar.Producer)
 	}
-
 	_, err = producer.Send(context.Background(), &pulsar.ProducerMessage{
 		Payload: content,
 	})
-
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
