@@ -17,7 +17,6 @@ import (
 )
 var bod client.Bodhi
 func main(){
-// New(Url string, Topic string, f func(byte2 []byte))
     _ = bod.New(client.Config{
     		Url:      "pulsar://localhost:6650",
     		Topic:    "my-topic",// 别人给自己发消息的时候自己监听的topic
@@ -27,9 +26,8 @@ func main(){
     select{ }
 }
 
-func callback(msg client.RequestMsg) {
-	rep := map[string]interface{}{"hello": 123}
-	_ = bod.SendReply(msg.MagId, rep, msg.FromTopic)
+func callback(byte2 client.RequestMsg) map[string]interface{} {
+	return map[string]interface{}{"hello": 123}
 }
 ```
 
@@ -62,10 +60,8 @@ func main(){
     select{ }
 }
 
-func callback(msg client.RequestMsg) {
-    fmt.Println(msg)
-    rep := map[string]interface{}{"hello": 123}
-    _ = bod.SendReply(msg.MagId, rep, msg.FromTopic)
+func callback(byte2 client.RequestMsg) map[string]interface{} {
+	return map[string]interface{}{"hello": 123}
 }
 ```
 
@@ -84,7 +80,6 @@ var bod client.Bodhi
 var errNum int
 
 func main() {
-    // 发送的总请求数量
 	testNum := 10000
 	du := make(chan int64, testNum)
 	var wg sync.WaitGroup
@@ -96,6 +91,7 @@ func main() {
 		CallBack: callback,
 		TimeOut:  5,
 	})
+
 	var all int64
 	var test int64
 	for {
@@ -149,9 +145,8 @@ func sendMessage(du *chan int64) error {
 	return nil
 }
 
-func callback(byte2 client.RequestMsg) {
-	rep := map[string]interface{}{"hello": 123}
-	_ = bod.SendReply(byte2.MagId, rep, byte2.FromTopic)
+func callback(byte2 client.RequestMsg) map[string]interface{} {
+	return map[string]interface{}{"hello": 123}
 }
 ```
 
