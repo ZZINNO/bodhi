@@ -95,6 +95,7 @@ func (b *Bodhi) New(config Config) error {
 	b.timeOut = config.TimeOut
 	b.CallBack = config.CallBack
 	b.replyTopic = config.Topic + b.RandString(6)
+	SubscriptionName := b.RandString(6)
 	var err error
 	b.serviceClient, err = pulsar.NewClient(pulsar.ClientOptions{
 		URL:               b.uRL,
@@ -112,12 +113,12 @@ func (b *Bodhi) New(config Config) error {
 	}
 	b.replyConsumer, err = b.replyClient.Subscribe(pulsar.ConsumerOptions{
 		Topic:            b.replyTopic,
-		SubscriptionName: "my-reply",
+		SubscriptionName: SubscriptionName + "-reply",
 		Type:             pulsar.Shared,
 	})
 	b.serverConsumer, err = b.serviceClient.Subscribe(pulsar.ConsumerOptions{
 		Topic:            b.topic,
-		SubscriptionName: "my-sender",
+		SubscriptionName: SubscriptionName + "-sender",
 		Type:             pulsar.Shared,
 	})
 	if err != nil {
