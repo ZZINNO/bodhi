@@ -5,32 +5,30 @@ import (
 	"errors"
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/google/uuid"
-	"github.com/json-iterator/go"
 	"github.com/sirupsen/logrus"
+	"github.com/vmihailenco/msgpack"
 	"math/rand"
 	"runtime"
 	"sync"
 	"time"
 )
 
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
-
 //
 //func init() {
 //	msgMap = make(map[string]*chan RespondMsg)
 //}
 type RequestMsg struct {
-	MagId     string `json:"mag_id"`
-	Data      Data   `json:"data"`
-	FromTopic string `json:"from_topic"`
+	MagId     string
+	Data      Data
+	FromTopic string
 }
 
 /**
 Columns 是专门用在case 进行整体匹配的, 每个case需要针对性的约定开发
 */
 type Data struct {
-	Key     string `json:"key"`
-	Columns string `json:"columns"`
+	Key     string
+	Columns string
 	/**
 	key = "1"
 	*/
@@ -40,10 +38,10 @@ type Data struct {
 }
 
 type RespondMsg struct {
-	MagId     string                 `json:"mag_id"`
-	Code      float64                `json:"code"`
-	Data      map[string]interface{} `json:"data"`
-	FromTopic string                 `json:"from_topic"`
+	MagId     string
+	Code      float64
+	Data      map[string]interface{}
+	FromTopic string
 }
 
 /**
@@ -148,7 +146,7 @@ func (b *Bodhi) serverLoop() {
 func (b *Bodhi) dealMsg(msg pulsar.Message) {
 	go b.serverConsumer.Ack(msg)
 	var rm RequestMsg
-	_ = json.Unmarshal(msg.Payload(), &rm)
+	_ = msgpack.Unmarshal(msg.Payload(), &rm)
 	rep := b.CallBack(rm)
 	err := b.sendReply(rm.MagId, rep, rm.FromTopic)
 	if err != nil {
@@ -174,7 +172,7 @@ func (b *Bodhi) replyLoop() {
 func (b *Bodhi) replyMsg(msg pulsar.Message) {
 	go b.replyConsumer.Ack(msg)
 	var m RespondMsg
-	_ = json.Unmarshal(msg.Payload(), &m)
+	_ = msgpack.Unmarshal(msg.Payload(), &m)
 	err := b.post(m)
 	if err != nil {
 		logrus.Error(err)
@@ -210,7 +208,7 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 		FromTopic: b.replyTopic,
 	}
 	// 将payload 转化为字节数组
-	content, err := json.Marshal(payload)
+	content, err := msgpack.Marshal(payload)
 	var producer pulsar.Producer
 	pload, ok := b.producerMap.Load(topic)
 	if !ok {
@@ -272,7 +270,7 @@ func (b *Bodhi) sendReply(id string, data map[string]interface{}, topic string) 
 		Data:      data,
 		FromTopic: b.topic,
 	}
-	content, err := json.Marshal(payload)
+	content, err := msgpack.Marshal(payload)
 	var producer pulsar.Producer
 	pload, ok := b.producerMap.Load(topic)
 	if !ok {
