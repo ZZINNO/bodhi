@@ -1,18 +1,16 @@
 package cache
 
 import (
-	"github.com/gogf/gf/container/gtree"
-	"github.com/gogf/gf/os/gtimer"
-	"github.com/gogf/gf/util/gutil"
+	"github.com/gogf/gf/os/gcache"
 	"time"
 )
 
 type CachePool struct {
-	DataPool *gtree.AVLTree
+	DataPool *gcache.Cache
 }
 
 func (p *CachePool) InitCachePool() {
-	p.DataPool = gtree.NewAVLTree(gutil.ComparatorString, true)
+	p.DataPool = gcache.New()
 }
 
 func (p *CachePool) Set(topic string, col string, key string, value map[string]interface{}, cacheTime int64) {
@@ -21,13 +19,7 @@ func (p *CachePool) Set(topic string, col string, key string, value map[string]i
 	}
 
 	Key := topic + col + key
-	p.DataPool.Set(Key, value)
-	if cacheTime > 0 {
-		interval := time.Duration(cacheTime) * time.Millisecond
-		gtimer.Add(interval, func() {
-			p.Remove(topic, col, key)
-		})
-	}
+	p.DataPool.Set(Key, value, time.Duration(cacheTime)*time.Millisecond)
 }
 
 func (p *CachePool) Get(topic string, col string, key string) map[string]interface{} {
