@@ -151,3 +151,15 @@ func callback(byte2 client.RequestMsg) map[string]interface{} {
 ```
 
 
+测试结果：
+```
+request count: 100000
+success rate: 100 %
+per cost: 2900 ms
+avg cost: 0 ms
+all cost: 5550 ms
+ERRNUM: 0
+rps: 18018 request/s
+```
+
+
