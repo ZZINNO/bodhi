@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"github.com/ZZINNO/bodhi/cache"
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -42,6 +43,9 @@ type RespondMsg struct {
 	Code      float64
 	Data      map[string]interface{}
 	FromTopic string
+	Col       string
+	key       string
+	CacheTime int64
 }
 
 /**
@@ -55,15 +59,16 @@ type Bodhi struct {
 	serverConsumer pulsar.Consumer
 	replyConsumer  pulsar.Consumer
 	replyTopic     string
-	CallBack       func(msg RequestMsg) map[string]interface{}
+	CallBack       func(msg RequestMsg) (map[string]interface{}, int64)
 	timeOut        int
 	msgMap         sync.Map
 	producerMap    sync.Map
+	dp             cache.CachePool
 }
 type Config struct {
 	Url      string
 	Topic    string
-	CallBack func(msg RequestMsg) map[string]interface{}
+	CallBack func(msg RequestMsg) (map[string]interface{}, int64)
 	TimeOut  int
 }
 
@@ -96,6 +101,7 @@ func (b *Bodhi) New(config Config) error {
 	b.CallBack = config.CallBack
 	b.replyTopic = config.Topic + b.RandString(6)
 	SubscriptionName := b.RandString(6)
+	b.dp.InitCachePool()
 	var err error
 	b.serviceClient, err = pulsar.NewClient(pulsar.ClientOptions{
 		URL:               b.uRL,
@@ -148,8 +154,8 @@ func (b *Bodhi) dealMsg(msg pulsar.Message) {
 	go b.serverConsumer.Ack(msg)
 	var rm RequestMsg
 	_ = msgpack.Unmarshal(msg.Payload(), &rm)
-	rep := b.CallBack(rm)
-	err := b.sendReply(rm.MagId, rep, rm.FromTopic)
+	rep, cacheTime := b.CallBack(rm)
+	err := b.sendReply(rm.MagId, rep, rm.FromTopic, rm.Data.Columns, rm.Data.Key, cacheTime)
 	if err != nil {
 		logrus.Error(err)
 	}
@@ -184,6 +190,7 @@ func (b *Bodhi) replyMsg(msg pulsar.Message) {
 // 向管道推信息
 func (b *Bodhi) post(p RespondMsg) error {
 	//c, ok := msgMap[p.MagId]
+	b.dp.Set(p.FromTopic, p.Col, p.key, p.Data, p.CacheTime)
 	c, ok := b.msgMap.Load(p.MagId)
 	if !ok {
 		return errors.New("map index error")
@@ -203,6 +210,23 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 	// 新建一个uuid
 	id := uuid.New()
 	// 构建payload
+
+	// 尝试命中缓存
+	rep := b.dp.Get(topic, data.Columns, data.Key)
+	if rep != nil {
+		r := RespondMsg{
+			MagId:     id.String(),
+			Code:      2,
+			Data:      rep,
+			FromTopic: topic,
+			Col:       data.Columns,
+			key:       data.Key,
+			CacheTime: 0,
+		}
+		return r, nil
+	}
+
+	//无法命中缓存
 	payload := RequestMsg{
 		MagId:     id.String(),
 		Data:      data,
@@ -264,12 +288,15 @@ func (b *Bodhi) SendMsgAndWaitReply(data Data, topic string) (RespondMsg, error)
 @data 消息体
 @topic topic
 */
-func (b *Bodhi) sendReply(id string, data map[string]interface{}, topic string) error {
+func (b *Bodhi) sendReply(id string, data map[string]interface{}, topic string, col string, key string, cacheTime int64) error {
 	payload := RespondMsg{
 		MagId:     id,
+		Col:       col,
+		key:       key,
 		Code:      2,
 		Data:      data,
 		FromTopic: b.topic,
+		CacheTime: cacheTime,
 	}
 	content, err := msgpack.Marshal(payload)
 	var producer pulsar.Producer
